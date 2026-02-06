@@ -1,0 +1,717 @@
+version: 1
+engine: hyperion
+description: >
+  Hyperion SAST – AI-augmented, low-noise, high-precision static analysis engine
+  built on top of Antigravity. This configuration defines Hyperion's philosophy,
+  AI system behavior, taint rules, sources, sinks, sanitizers, and how
+  Antigravity should act as the final smart analysis layer for false positives,
+  exploitability, and prioritization.
+
+meta:
+  product_name: Hyperion
+  goal: >
+    Be the best SAST tool on earth by combining precise static taint analysis,
+    framework awareness, developer feedback, and Antigravity AI reasoning.
+  principles:
+    - Minimize false positives ruthlessly.
+    - Only report issues that are realistically exploitable.
+    - Understand frameworks and real-world patterns (Django, Flask, Spring, Express, Laravel, Rails, etc.).
+    - Use AI as the final verifier, not the first scanner.
+    - Learn from developer feedback (self-improving SAST).
+    - Integrate smoothly in CI/CD and developer workflows.
+
+ai_engine:
+  name: antigravity
+  mode: "verification"         # Static engine finds candidates, AI verifies them.
+  
+  # LLM Provider Configuration
+  provider: "openai"            # Options: openai, anthropic, google
+  model: "gpt-4o-mini"          # Model to use (cost-effective by default)
+  api_key: null                 # Set via environment variable (OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY)
+  
+  # Generation Parameters
+  temperature: 0.0
+  max_tokens: 768
+  retry_on_failure: 2
+  
+  # Storage and Privacy
+  store_explanations: true
+  redact_sensitive_data: true
+  
+  # Cost Control
+  max_verifications_per_scan: 100  # Limit AI calls to control costs
+  enable_caching: true              # Cache similar findings
+
+  system_prompt: |
+    You are the AI reasoning engine inside Hyperion, an advanced SAST tool.
+    Your job is to take candidate findings from a static analyzer and decide:
+    - Is this a REAL VULNERABILITY or a FALSE_POSITIVE?
+    - How exploitable is it in practice?
+    - How should it be prioritized?
+
+    Core principles:
+    1. Do NOT be noisy. Only confirm vulnerabilities that are realistically
+       exploitable by an attacker.
+    2. Always check:
+       - Is the source truly attacker-controlled?
+       - Is the code path reachable at runtime?
+       - Is there a dangerous sink (OS command, SQL, HTML rendering, SSRF, file write, etc.)?
+       - Is there any sanitization, validation, or whitelisting?
+       - Is this test code, generated code, or a framework boilerplate file?
+       - Is the context internal/admin-only vs public?
+    3. Treat framework-level CLI dispatchers as SAFE, not vulnerable:
+       - Django: execute_from_command_line (manage.py)
+       - Flask CLI
+       - Laravel Artisan
+       - Node commander / yargs CLI
+       - Rails commands
+       - Spring Boot: SpringApplication.run
+       - Go: cobra.Command.Execute
+       These are NOT OS command injection unless they directly invoke OS shells.
+    4. Treat sys.argv, process.argv, args[], $argv, ARGV, os.Args as
+       trusted framework CLI arguments by default, UNLESS explicitly configured
+       as attacker-controlled in a specific project context.
+    5. Do NOT treat constant strings or fixed queries as injection.
+    6. If input passes through strong validation / parameterization /
+       escaping / encoding, suppress the issue.
+    7. Consider exploitability:
+       - EASY: trivial input -> sink, high risk.
+       - MEDIUM: needs some conditions but still realistic.
+       - HARD: theoretical, but unlikely in normal deployments.
+       - THEORETICAL/UNREACHABLE: treat as FALSE_POSITIVE.
+    8. Integrate developer feedback:
+       - If developers mark similar findings as false positive repeatedly,
+         you should lean towards FALSE_POSITIVE for that pattern in this project.
+    9. Output for each finding:
+       - verdict: REAL_VULNERABILITY or FALSE_POSITIVE
+       - reasoning: short, clear explanation
+       - exploitability: EASY / MEDIUM / HARD / THEORETICAL
+       - recommended_action: what the developer should do (or "no action required")
+
+    Your answers must be short, security-focused, and highly practical.
+
+settings:
+  languages:
+    - python
+    - javascript
+    - typescript
+    - java
+    - csharp
+    - php
+    - ruby
+    - go
+
+  global:
+    enable_taint_analysis: true
+    enable_dataflow_graph: true
+    enable_controlflow_analysis: true
+    enable_ai_reasoning: true
+    default_severity: MEDIUM
+    default_confidence: MEDIUM
+    max_findings_per_file: 200
+    max_findings_per_project: 5000
+
+  false_positive_policy:
+    require_exploitability: true
+    require_reachability: true
+    require_attacker_control: true
+    require_dangerous_sink: true
+    auto_suppress_low_confidence: true
+    auto_suppress_test_code: true
+    auto_suppress_generated_code: true
+
+# ===================================================================
+# SOURCES: attacker-controlled and trusted sources
+# ===================================================================
+sources:
+  - id: http_request
+    description: HTTP request input
+    attacker_controlled: true
+    languages: [python, javascript, typescript, java, csharp, php, ruby, go]
+    patterns:
+      python:
+        - "request\\.GET\\[.*\\]"
+        - "request\\.POST\\[.*\\]"
+        - "request\\.body"
+      javascript:
+        - "req\\.query\\..*"
+        - "req\\.body\\..*"
+        - "req\\.params\\..*"
+        - "ctx\\.request\\..*"
+      java:
+        - "HttpServletRequest\\.getParameter\\(.*\\)"
+        - "HttpServletRequest\\.getHeader\\(.*\\)"
+      csharp:
+        - "HttpRequest\\.Query\\[.*\\]"
+        - "HttpRequest\\.Form\\[.*\\]"
+      php:
+        - "\\$_GET\\[.*\\]"
+        - "\\$_POST\\[.*\\]"
+        - "\\$_REQUEST\\[.*\\]"
+      ruby:
+        - "params\\[.*\\]"
+      go:
+        - "r\\.FormValue\\(.*\\)"
+        - "r\\.URL\\.Query\\(\\).Get\\(.*\\)"
+
+  - id: user_input_cli
+    description: CLI input from stdin (where CLI is exposed to end users)
+    attacker_controlled: true
+    languages: [python, javascript, java, csharp, php, ruby, go]
+    patterns:
+      python:
+        - "input\\(.*\\)"
+      javascript:
+        - "readline\\.question\\(.*\\)"
+      java:
+        - "Scanner\\(System\\.in\\)"
+      csharp:
+        - "Console\\.ReadLine\\(\\)"
+      php:
+        - "readline\\(.*\\)"
+      ruby:
+        - "STDIN\\.gets"
+      go:
+        - "bufio\\.NewReader\\(os\\.Stdin\\)"
+
+  - id: framework_cli_args
+    description: >
+      Framework-level CLI arguments (sys.argv, process.argv, args, etc.).
+      Treat as trusted inputs UNLESS explicitly overridden for a project.
+    attacker_controlled: false
+    trusted_by_default: true
+    languages: [python, javascript, java, csharp, php, ruby, go]
+    patterns:
+      python:
+        - "sys\\.argv"
+      javascript:
+        - "process\\.argv"
+      java:
+        - "String\\[]\\s+args"
+      csharp:
+        - "string\\[]\\s+args"
+      php:
+        - "\\$argv"
+      ruby:
+        - "ARGV"
+      go:
+        - "os\\.Args"
+
+# ===================================================================
+# SANITIZERS
+# ===================================================================
+sanitizers:
+  - id: sql_parameterization
+    description: Strong SQL parameterization / ORM query builder.
+    patterns:
+      python:
+        - "cursor\\.execute\\(.*%s.*\\)"
+        - "Model\\.objects\\.filter\\("
+      javascript:
+        - "db\\.query\\(.*\\?,.*\\)"
+        - "knex\\("
+      java:
+        - "PreparedStatement"
+        - "EntityManager\\.createQuery\\("
+      csharp:
+        - "SqlParameter"
+        - "DbCommand\\.Parameters"
+      php:
+        - "PDOStatement::bindParam"
+        - "PDO::prepare"
+      ruby:
+        - "where\\(.*\\?,.*\\)"
+      go:
+        - "db\\.Query\\(.*\\?,.*\\)"
+        - "db\\.Exec\\(.*\\?,.*\\)"
+
+  - id: html_escaping
+    description: HTML escaping / output encoding
+    patterns:
+      python:
+        - "django\\.utils\\.html\\.escape"
+        - "mark_safe"
+      javascript:
+        - "escapeHtml\\("
+        - "_.escape\\("
+      java:
+        - "StringEscapeUtils\\.escapeHtml"
+      php:
+        - "htmlspecialchars\\("
+        - "htmlentities\\("
+      ruby:
+        - "h\\("
+      go:
+        - "template\\.HTMLEscapeString\\("
+
+  - id: url_encoding
+    description: URL encoding
+    patterns:
+      python:
+        - "urllib\\.parse\\.quote\\("
+      javascript:
+        - "encodeURIComponent\\("
+      java:
+        - "URLEncoder\\.encode\\("
+      php:
+        - "urlencode\\("
+      ruby:
+        - "CGI\\.escape\\("
+      go:
+        - "url\\.QueryEscape\\("
+
+# ===================================================================
+# DANGEROUS SINKS
+# ===================================================================
+sinks:
+  - id: os_command_execution
+    severity: CRITICAL
+    description: OS command execution
+    patterns:
+      python:
+        - "os\\.system\\("
+        - "subprocess\\.Popen\\("
+        - "subprocess\\.run\\("
+      javascript:
+        - "child_process\\.exec\\("
+        - "child_process\\.execSync\\("
+      java:
+        - "Runtime\\.getRuntime\\(\\)\\.exec\\("
+      csharp:
+        - "Process\\.Start\\("
+      php:
+        - "shell_exec\\("
+        - "exec\\("
+        - "system\\("
+        - "passthru\\("
+      ruby:
+        - "`.*`"
+        - "system\\("
+      go:
+        - "exec\\.Command\\("
+
+  - id: sql_execution
+    severity: HIGH
+    description: SQL execution
+    patterns:
+      python:
+        - "cursor\\.execute\\("
+      javascript:
+        - "db\\.query\\("
+      java:
+        - "Statement\\.executeQuery\\("
+        - "EntityManager\\.createNativeQuery\\("
+      csharp:
+        - "SqlCommand\\.ExecuteReader\\("
+      php:
+        - "mysqli_query\\("
+        - "PDO::query\\("
+      ruby:
+        - "connection\\.execute\\("
+      go:
+        - "db\\.Query\\("
+        - "db\\.Exec\\("
+
+  - id: html_render
+    severity: MEDIUM
+    description: HTML rendering (potential XSS)
+    patterns:
+      python:
+        - "render\\("
+        - "HttpResponse\\("
+      javascript:
+        - "res\\.send\\("
+        - "res\\.render\\("
+      php:
+        - "echo\\s+.*;"
+      ruby:
+        - "render\\s+.*"
+      java:
+        - "response\\.getWriter\\(\\)\\.write\\("
+
+  - id: file_write
+    severity: MEDIUM
+    description: File write (path traversal / overwrite risk)
+    patterns:
+      python:
+        - "open\\(.*,'w'\\)"
+      javascript:
+        - "fs\\.writeFile\\("
+        - "fs\\.writeFileSync\\("
+      php:
+        - "file_put_contents\\("
+      ruby:
+        - "File\\.write\\("
+      go:
+        - "os\\.WriteFile\\("
+
+  - id: url_request
+    severity: HIGH
+    description: Outbound HTTP request (SSRF risk)
+    patterns:
+      python:
+        - "requests\\.get\\("
+        - "requests\\.post\\("
+      javascript:
+        - "axios\\."
+        - "fetch\\("
+        - "http\\.request\\("
+      java:
+        - "HttpClient\\.send\\("
+      php:
+        - "curl_exec\\("
+      ruby:
+        - "Net::HTTP\\.start\\("
+      go:
+        - "http\\.Get\\("
+        - "http\\.Post\\("
+
+# ===================================================================
+# SAFE FRAMEWORK SINKS / FILES – automatic FP suppression
+# ===================================================================
+framework_safe:
+  cli_dispatchers:
+    - name: django_manage_py
+      files:
+        - ".*/manage\\.py$"
+      sinks:
+        - "django\\.core\\.management\\.execute_from_command_line"
+    - name: flask_cli
+      sinks:
+        - "flask\\.cli\\.main"
+    - name: artisan_cli
+      files:
+        - ".*/artisan$"
+        - ".*/artisan\\.php$"
+      sinks:
+        - "Artisan::call"
+        - "Symfony\\\\Component\\\\Console\\\\Application::run"
+    - name: node_commander
+      sinks:
+        - "commander\\.Command\\.parse"
+        - "yargs\\.parse"
+    - name: rails_cli
+      sinks:
+        - "Rails::Command\\.invoke"
+    - name: spring_boot
+      sinks:
+        - "SpringApplication\\.run"
+    - name: cobra_cli
+      sinks:
+        - "cobra\\.Command\\.Execute"
+
+  test_file_patterns:
+    - ".*/tests?/.*"
+    - ".*/spec/.*"
+    - ".*/__tests__/.*"
+    - ".*Test\\.java$"
+    - ".*Tests\\.cs$"
+
+  generated_code_patterns:
+    - ".*/build/.*"
+    - ".*/dist/.*"
+    - ".*/node_modules/.*"
+    - ".*/vendor/.*"
+    - ".*/.venv/.*"
+    - ".*/.mypy_cache/.*"
+
+# ===================================================================
+# RULES: AI-assisted taint-based vulnerabilities
+# ===================================================================
+rules:
+
+  - id: HYP-OS-CMD-001
+    name: OS Command Injection
+    category: command_injection
+    severity: CRITICAL
+    languages: [python, javascript, java, csharp, php, ruby, go]
+    source_ids: [http_request, user_input_cli]
+    sink_ids: [os_command_execution]
+    requires:
+      - attacker_controlled_source
+      - reachable_path
+      - no_sanitizer_in_between
+    ai_assist:
+      enabled: true
+      prompt: |
+        Evaluate this candidate OS command injection.
+        Check:
+        - Is the input truly attacker-controlled?
+        - Is the command string constructed with that input?
+        - Is there any validation or strict whitelisting?
+        - Is this test/debug/admin-only code?
+        Output:
+        - verdict: REAL_VULNERABILITY or FALSE_POSITIVE
+        - reasoning
+        - exploitability: EASY/MEDIUM/HARD/THEORETICAL
+        - recommended_action
+    suppression:
+      auto_suppress_if:
+        - condition: "source_is_framework_cli_args"
+        - condition: "file_is_framework_cli_dispatcher"
+        - condition: "code_unreachable"
+        - condition: "taint_not_used_in_command"
+
+  - id: HYP-SQL-001
+    name: SQL Injection
+    category: injection
+    severity: HIGH
+    languages: [python, javascript, java, csharp, php, ruby, go]
+    source_ids: [http_request, user_input_cli]
+    sink_ids: [sql_execution]
+    excludes_if_sanitized_by: [sql_parameterization]
+    ai_assist:
+      enabled: true
+      prompt: |
+        Evaluate this candidate SQL injection.
+        Check:
+        - Is user-controlled input concatenated directly into SQL?
+        - Is the query parameterized or using placeholders?
+        - Is the ORM auto-sanitizing the input?
+        Output verdict + reasoning + exploitability + recommended_action.
+    suppression:
+      auto_suppress_if:
+        - condition: "sanitized_by_parameterization"
+        - condition: "query_is_constant_string"
+        - condition: "source_is_not_user_controlled"
+
+  - id: HYP-XSS-001
+    name: Cross-Site Scripting
+    category: xss
+    severity: HIGH
+    languages: [python, javascript, php, ruby, java]
+    source_ids: [http_request]
+    sink_ids: [html_render]
+    excludes_if_sanitized_by: [html_escaping]
+    ai_assist:
+      enabled: true
+      prompt: |
+        Evaluate this candidate XSS.
+        Check:
+        - Does attacker input reach HTML output?
+        - Is it escaped/encoded/sanitized?
+        - Is the response actually HTML (not JSON/text/plain)?
+        Output verdict + reasoning + exploitability + recommended_action.
+    suppression:
+      auto_suppress_if:
+        - condition: "sanitized_by_html_escaping"
+        - condition: "response_content_type_not_html"
+        - condition: "value_never_reaches_template"
+
+  - id: HYP-PATH-001
+    name: Path Traversal
+    category: path_traversal
+    severity: HIGH
+    languages: [python, javascript, php, ruby, java, go]
+    source_ids: [http_request, user_input_cli]
+    sink_ids: [file_write]
+    ai_assist:
+      enabled: true
+      prompt: |
+        Evaluate this candidate path traversal.
+        Check:
+        - Does user input influence the file path?
+        - Is there validation/normalization or restriction to a fixed root?
+        - Is there a whitelist of allowed filenames?
+        Output verdict + reasoning + exploitability + recommended_action.
+    suppression:
+      auto_suppress_if:
+        - condition: "input_validated_against_whitelist"
+        - condition: "path_root_is_constant_and_safe"
+
+  - id: HYP-SSRF-001
+    name: Server-Side Request Forgery
+    category: ssrf
+    severity: HIGH
+    languages: [python, javascript, java, php, ruby, go]
+    source_ids: [http_request, user_input_cli]
+    sink_ids: [url_request]
+    ai_assist:
+      enabled: true
+      prompt: |
+        Evaluate this candidate SSRF.
+        Check:
+        - Can the attacker control the URL or host?
+        - Is there a strict allowlist of domains or IPs?
+        - Are private/internal IP ranges blocked?
+        Output verdict + reasoning + exploitability + recommended_action.
+    suppression:
+      auto_suppress_if:
+        - condition: "host_validated_against_allowlist"
+        - condition: "url_source_is_constant"
+
+  - id: HYP-SECRET-001
+    name: Hardcoded Secret
+    category: secret_leak
+    severity: HIGH
+    languages: [python, javascript, java, csharp, php, ruby, go]
+    pattern_based: true
+    patterns:
+      - "(api|secret|token|password|passwd|key)[\"']?\\s*[:=]\\s*[\"'][^\"']{16,}[\"']"
+    ai_assist:
+      enabled: true
+      prompt: |
+        Evaluate whether this looks like a real secret or just a placeholder.
+        Check:
+        - Is it a realistic key/token/password format?
+        - Is it clearly sample/test/demo data?
+        Output verdict + reasoning + exploitability + recommended_action.
+    suppression:
+      auto_suppress_if:
+        - condition: "looks_like_placeholder_value"
+        - condition: "file_is_test_or_example"
+
+# ===================================================================
+# AI REASONING GLOBAL
+# ===================================================================
+ai_reasoning:
+  engine: antigravity
+  mode: "verification"
+  max_tokens: 768
+  temperature: 0.0
+  retry_on_failure: 2
+  logging:
+    enabled: true
+    store_explanations: true
+    redact_sensitive_data: true
+
+# ===================================================================
+# RISK SCORING MODEL
+# ===================================================================
+risk_scoring:
+  factors:
+    base_severity_weight: 0.4
+    exploitability_weight: 0.3
+    reachability_weight: 0.2
+    confidence_weight: 0.1
+  exploitability_levels:
+    EASY: 1.0
+    MEDIUM: 0.7
+    HARD: 0.4
+    THEORETICAL: 0.2
+  reachability_levels:
+    FULLY_REACHABLE: 1.0
+    PARTIALLY_REACHABLE: 0.6
+    BARELY_REACHABLE: 0.3
+    UNREACHABLE: 0.0
+  confidence_levels:
+    HIGH: 1.0
+    MEDIUM: 0.7
+    LOW: 0.4
+  thresholds:
+    critical: 0.85
+    high: 0.7
+    medium: 0.5
+    low: 0.3
+
+# ===================================================================
+# GLOBAL SUPPRESSION RULES
+# ===================================================================
+suppression:
+  rules:
+    - id: SUPPRESS-CLI-DISPATCHERS
+      description: Suppress findings in framework CLI dispatchers (manage.py, artisan, etc.)
+      when:
+        any:
+          - file_matches_framework_cli_dispatcher: true
+          - sink_matches_framework_cli_dispatcher: true
+      action:
+        type: suppress
+        reason: "Framework CLI dispatcher – safe by design."
+        tag: "false-positive-cli-dispatcher"
+
+    - id: SUPPRESS-TEST-FILES
+      description: Suppress or downgrade findings in test files
+      when:
+        file_matches_test_pattern: true
+      action:
+        type: lower_severity_or_suppress
+        downgrade_below: MEDIUM
+        reason: "Test code – lower impact unless explicitly configured."
+
+    - id: SUPPRESS-GENERATED-CODE
+      description: Suppress findings in generated / vendor code
+      when:
+        file_matches_generated_pattern: true
+      action:
+        type: suppress
+        reason: "Generated/vendor code – not primary application logic."
+
+    - id: SUPPRESS-UNREACHABLE
+      description: Suppress findings in unreachable code
+      when:
+        controlflow_reachability: "UNREACHABLE"
+      action:
+        type: suppress
+        reason: "Unreachable code – not exploitable."
+
+    - id: SUPPRESS-AI-FALSE-POSITIVE
+      description: Suppress if AI verification marks finding as FALSE_POSITIVE
+      when:
+        ai_verdict: "FALSE_POSITIVE"
+      action:
+        type: suppress
+        reason: "AI-verified false positive."
+        tag: "ai-fp"
+
+# ===================================================================
+# LEARNING & FEEDBACK (self-improving SAST)
+# ===================================================================
+learning_and_feedback:
+  enable_feedback_learning: true
+  developer_feedback_options:
+    - VALID_VULNERABILITY
+    - FALSE_POSITIVE
+    - ACCEPT_RISK
+  on_feedback:
+    VALID_VULNERABILITY:
+      - increase_confidence_for_pattern
+      - keep_rule_as_is
+    FALSE_POSITIVE:
+      - create_project_local_suppression
+      - adjust_ai_bias_towards_false_positive_for_similar_flows: true
+    ACCEPT_RISK:
+      - tag_finding_as_accepted_risk
+      - suppress_in_future_scans_for_same_location: true
+
+# ===================================================================
+# CI/CD INTEGRATION GUIDANCE
+# ===================================================================
+ci_cd:
+  modes:
+    - name: full_scan
+      description: Full project scan, used nightly or on main branch merges.
+    - name: diff_scan
+      description: Only scan changed files and impacted flows for PRs.
+  default_blocking_policy:
+    pull_requests:
+      block_on:
+        - new_critical_real_vulnerabilities
+        - new_high_real_vulnerabilities
+      ignore:
+        - false_positives
+        - accepted_risk
+        - test_file_findings_below_critical
+    main_branch:
+      block_on:
+        - critical
+      allow_if:
+        - only_low_and_medium
+
+# ===================================================================
+# CORRELATION (SAST + SCA + Secrets + Config)
+# ===================================================================
+correlation:
+  inputs:
+    sast: true
+    sca: true            # future: software composition analysis
+    secrets: true
+    iac: true            # infra-as-code (Terraform, Kubernetes, etc.)
+  strategy:
+    - correlate:
+        when: "same_file_or_endpoint"
+        group_as: "compound_issue"
+    - enrich_with:
+        - cwe
+        - owasp_top10
+        - project_risk_profile

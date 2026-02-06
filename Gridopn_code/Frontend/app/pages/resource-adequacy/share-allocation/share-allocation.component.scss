@@ -1,0 +1,90 @@
+/* Prevent layout jump */
+.card-body {
+  overflow: hidden;
+}
+
+/* Spreadsheet wrapper */
+.spreadsheet-container {
+  width: 100%;
+  max-height: 520px;
+  overflow: auto;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  background: #fff;
+}
+
+/* Allow horizontal expansion */
+::ng-deep .spreadsheet-container .jexcel_container,
+::ng-deep .spreadsheet-container .jexcel_content,
+::ng-deep .spreadsheet-container table {
+  min-width: max-content;
+}
+
+/* Grid borders */
+::ng-deep .jexcel td,
+::ng-deep .jexcel th {
+  border: 1px solid #ced4da !important;
+}
+
+::ng-deep .jexcel thead th {
+  border-bottom: 2px solid #adb5bd !important;
+}
+
+/* Nested headers */
+::ng-deep .jexcel_nested th {
+  background-color: #f3f6f9;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* Frozen columns */
+::ng-deep .jexcel td.fixed-col,
+::ng-deep .jexcel th.fixed-col {
+  background-color: #fafafa;
+  border-right: 2px solid #adb5bd !important;
+  font-weight: 500;
+}
+
+/* Readonly fix */
+::ng-deep .jexcel_readonly {
+  color: #212529 !important;
+  opacity: 1 !important;
+}
+
+/* Loader overlay */
+.view-container {
+  position: relative;
+  min-height: 480px;
+}
+
+.loader-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  z-index: 10;
+}
+
+.spreadsheet-hidden {
+  visibility: hidden;
+}
+
+/* Button loader – SAME AS DAY AHEAD */
+.btn-load {
+  min-width: 190px;
+}
+
+/* Spinner size */
+.spinner-border-sm {
+  width: 1rem;
+  height: 1rem;
+}
+
+.view-container,
+.upload-container {
+  min-height: 520px;
+  position: relative;
+}

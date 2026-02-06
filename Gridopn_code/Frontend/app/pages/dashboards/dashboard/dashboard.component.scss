@@ -1,0 +1,22 @@
+.title-text {
+    font-size: 14px;
+    font-weight: bold;
+    font-family: Arial, sans-serif;
+    color: #263238;
+    margin-bottom: 8px;
+}
+
+.mape-chart,
+.comparison-chart {
+    width: 100%;
+    height: 420px;       /* No !important — allows ECharts auto-resize */
+    max-width: 100%;
+    overflow: hidden;     /* Prevents any overflow */
+    display: block;
+}
+
+.card .comparison-chart,
+.card .mape-chart {
+    padding: 0 !important;     /* Avoid clipping inside card */
+    box-sizing: border-box;
+}
