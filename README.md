@@ -44,7 +44,6 @@ Hyperion is a deep-learning-enhanced security scanner designed to detect complex
     Run **`uninstall_windows.bat`** to remove the shortcut and installed libraries.
 
 ## 🖥️ Server Deployment Usage
-
 ### Local Development
 Run the dashboard locally on `127.0.0.1`:
 ```bash
