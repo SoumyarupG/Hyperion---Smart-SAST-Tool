@@ -1,0 +1,4 @@
+venv
+.git
+__pycache__
+install_exclude_list.txt

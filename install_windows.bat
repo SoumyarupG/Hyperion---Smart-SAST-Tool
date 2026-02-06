@@ -16,8 +16,25 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: 2. Create Virtual Environment
-echo [1/4] Creating secure virtual environment...
+:: 2. Choose Install Location
+echo.
+set "DEFAULT_INSTALL_DIR=%USERPROFILE%\HyperionSAST"
+echo Default installation location: %DEFAULT_INSTALL_DIR%
+set /p "INSTALL_DIR=Enter installation path (Press Enter for Default): "
+if "%INSTALL_DIR%"=="" set "INSTALL_DIR=%DEFAULT_INSTALL_DIR%"
+
+echo.
+echo [1/4] Setting up installation in: "%INSTALL_DIR%"
+if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
+
+:: Copy files to install dir (except venv and git)
+xcopy /E /I /Y . "%INSTALL_DIR%" /EXCLUDE:install_exclude_list.txt >nul 2>&1
+
+:: Move to install dir
+cd /d "%INSTALL_DIR%"
+
+:: 3. Create Virtual Environment
+echo [2/4] Creating secure virtual environment...
 if not exist "venv" (
     python -m venv venv
 ) else (
@@ -36,12 +53,14 @@ if %errorlevel% neq 0 (
 
 :: 4. Create Desktop Shortcut
 echo [3/4] Creating Desktop Shortcut...
-set SHORTCUT_PATH="%USERPROFILE%\Desktop\Hyperion SAST.lnk"
-set ICON_PATH="%CD%\static\favicon.ico"
-set TARGET="%CD%\start_hyperion.bat"
 
-:: Use PowerShell to create secure shortcut
-powershell "$s=(New-Object -COM WScript.Shell).CreateShortcut('%SHORTCUT_PATH%');$s.TargetPath='%TARGET%';$s.WorkingDirectory='%CD%';$s.IconLocation='%ICON_PATH%';$s.Save()"
+set ICON_PATH=%CD%\static\favicon.ico
+set TARGET=%CD%\start_hyperion.bat
+set WORKING_DIR=%CD%
+
+:: Use PowerShell to dynamically find Desktop and create shortcut
+powershell -Command "$DesktopPath = [Environment]::GetFolderPath('Desktop'); $ShortcutPath = Join-Path $DesktopPath 'Hyperion SAST.lnk'; $WScript = New-Object -ComObject WScript.Shell; $Shortcut = $WScript.CreateShortcut($ShortcutPath); $Shortcut.TargetPath = '%TARGET%'; $Shortcut.WorkingDirectory = '%WORKING_DIR%'; $Shortcut.IconLocation = '%ICON_PATH%'; $Shortcut.Save()"
+
 
 :: 5. Create Start Script
 echo [4/4] Finalizing setup...
