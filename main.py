@@ -166,4 +166,21 @@ async def get_feedback_stats(project_path: str):
     return stats
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    # When running as an EXE (frozen), reload=True doesn't work and import strings can be flaky.
+    # We pass the app object directly.
+    import sys
+    
+    if getattr(sys, 'frozen', False):
+         # Auto-open browser for "App-like" experience
+         import webbrowser
+         import threading
+         import time
+         
+         def open_browser():
+             time.sleep(1.5) # Wait for server to start
+             webbrowser.open("http://127.0.0.1:8000")
+             
+         threading.Thread(target=open_browser, daemon=True).start()
+         uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info", reload=False)
+    else:
+         uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
